@@ -1,8 +1,21 @@
 import express from 'express';
 import axios from 'axios';
+import redis from 'redis';
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+let redisClient;
+
+(async () => {
+  redisClient = redis.createClient({
+    socket: { host: '127.0.0.1', port: 6379 }
+  });
+
+  redisClient.on("error", (error) => console.error(`Error : ${error}`));
+
+  await redisClient.connect();
+})();
 
 async function fetchApiData(species) {
   const apiResponse = await axios.get(
@@ -11,17 +24,27 @@ async function fetchApiData(species) {
   console.log("Request sent to the API");
   return apiResponse.data;
 }
+
 async function getSpeciesData(req, res) {
   const species = req.params.species;
   let results;
+  let isCached = false;
 
   try {
-    results = await fetchApiData(species);
-    if (results.length === 0) {
-      throw "API returned an empty array";
+    const cacheResults = await redisClient.get(species);
+    if (cacheResults) {
+      isCached = true;
+      results = JSON.parse(cacheResults);
+    } else {
+      results = await fetchApiData(species);
+      if (results.length === 0) {
+        throw "API returned an empty array";
+      }
+      await redisClient.set(species, JSON.stringify(results));
     }
+
     res.send({
-      fromCache: false,
+      fromCache: isCached,
       data: results,
     });
   } catch (error) {
